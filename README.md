@@ -24,8 +24,7 @@
 
 ## 3. GitHub Repository Link
 
-* **Primary Repository:** [https://github.com/Supl3x/UBIT-](https://github.com/Supl3x/UBIT-)
-* **Upstream / Collaborative Source:** [https://github.com/MuhammadAhmedKhan2006/UBIT](https://github.com/MuhammadAhmedKhan2006/UBIT)
+* **GitHub Repository:** [https://github.com/Supl3x/UBIT-](https://github.com/Supl3x/UBIT-)
 
 ---
 
