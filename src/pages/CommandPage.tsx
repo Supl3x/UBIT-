@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store'
 import { t } from '../i18n'
+import LiveMap, { type LiveMapHandle } from '../components/LiveMap'
 
 export default function CommandPage() {
   const navigate = useNavigate()
-  const { language, cases, openCaseDrawer, showToast } = useStore()
+  const { language, cases, openCaseDrawer, showToast, assignments, mapAssets, mapSensors, weather } = useStore()
   const [selectedArea, setSelectedArea] = useState<string | null>(null)
-  const [zoomLevel, setZoomLevel] = useState(1)
+  const [showFlood, setShowFlood] = useState(true)
+  const [showAssets, setShowAssets] = useState(true)
+  const mapRef = useRef<LiveMapHandle>(null)
   const tracked = cases.length
   const t1 = cases.filter((c) => c.tier === 1).length
   const t2 = cases.filter((c) => c.tier === 2).length
@@ -19,25 +22,17 @@ export default function CommandPage() {
   }
 
   const handleAreaSelect = (area: string) => {
-    setSelectedArea(selectedArea === area ? null : area)
+    setSelectedArea(area === 'all' || selectedArea === area ? null : area)
   }
 
-  const handleZoomIn = () => {
-    setZoomLevel(Math.min(zoomLevel + 0.2, 2))
-  }
-
-  const handleZoomOut = () => {
-    setZoomLevel(Math.max(zoomLevel - 0.2, 0.5))
-  }
-
+  const handleZoomIn = () => mapRef.current?.zoomIn()
+  const handleZoomOut = () => mapRef.current?.zoomOut()
   const handleRecenter = () => {
-    setZoomLevel(1)
+    mapRef.current?.recenter()
     showToast(t('mapRecentered', 'en'), t('mapRecentered', 'ur'), 'info')
   }
 
-  const filteredCases = selectedArea
-    ? cases.filter(c => c.location.toLowerCase().includes(selectedArea.toLowerCase()))
-    : cases
+  const filteredCases = selectedArea ? cases.filter((c) => c.area === selectedArea) : cases
 
   return (
     <div className="bg-background font-body-md text-on-surface antialiased selection:bg-primary-container selection:text-on-primary-container min-h-screen">
@@ -161,8 +156,8 @@ export default function CommandPage() {
             <div className="flex flex-wrap items-center justify-between gap-space-sm z-10">
               <div className="flex items-center gap-space-sm">
                 <div className="px-space-sm py-1 rounded bg-surface-container-high text-primary font-telemetry-sm text-telemetry-sm flex items-center gap-1.5 shadow-sm">
-                  <span className="material-symbols-outlined text-telemetry-md">view_in_ar</span>
-                  <span>Perspective View 28°</span>
+                  <span className="material-symbols-outlined text-telemetry-md">map</span>
+                  <span>Live Map</span>
                 </div>
                 <div className="flex items-center bg-surface-container rounded-lg p-0.5">
                   <button
@@ -226,152 +221,38 @@ export default function CommandPage() {
               </div>
             </div>
 
-            {/* 3D Perspective Map Canvas Container */}
-            <div className="relative w-full h-[520px] rounded-lg overflow-hidden bg-surface-container-lowest shadow-inner [perspective:1200px]">
-              {/* Tilted Map Surface */}
-              <div
-                className="w-full h-full relative transition-transform duration-300 ease-out"
-                style={{
-                  transform: `rotateX(24deg) scale(${1.05 * zoomLevel})`,
-                  transformOrigin: '50% 80%',
-                }}
-              >
-                {/* Simulated Satellite Base Map Layer */}
-                <div className="absolute inset-0 bg-cover bg-center opacity-40 mix-blend-luminosity filter contrast-125" style={{ backgroundImage: "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDfOv1_droolOJs3jzkRzstrRIHNCLxytCLvIcRKnzorJHtq1HMX0Xb8O1cojQKzy9Ilf9BMPgg5Omk8SCYMcwN0eXhw6CP4T3syu-zHSHGBQx2ENzh2JUbG9tjO-e_Vmu7SF1FYzcB-8a-HaG3hL6I40mT2Ew4eta6Ml8aYjfcbulE4T8ctiUconjfbsVJSffc69OII7ywfG_7Uh47JCqyGoPmzuEntoHNkdwbT1fpon79_DKRBDkM4w')" }}></div>
-                {/* Deep Monsoon Teal Ambient & Riverbed Inundation Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-background via-surface-dim/70 to-surface-container-lowest/80"></div>
-                {/* Water Vector Polygons & Flash Flood Spillway (Inline SVG Overlay) */}
-                <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1000 700" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="floodFlow" x1="0%" x2="100%" y1="0%" y2="80%">
-                      <stop offset="0%" stopColor="#1da290" stopOpacity="0.2"></stop>
-                      <stop offset="60%" stopColor="#65d9c5" stopOpacity="0.45"></stop>
-                      <stop offset="100%" stopColor="#1da290" stopOpacity="0.3"></stop>
-                    </linearGradient>
-                    <pattern height="12" id="diagonalHatch" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse" width="12">
-                      <line opacity="0.6" stroke="#9e8e7c" strokeWidth="2.5" x1="0" x2="0" y1="0" y2="12"></line>
-                    </pattern>
-                    <linearGradient id="dangerFlow" x1="0%" x2="100%" y1="100%" y2="0%">
-                      <stop offset="0%" stopColor="#ffb4ab" stopOpacity="0.1"></stop>
-                      <stop offset="100%" stopColor="#93000a" stopOpacity="0.5"></stop>
-                    </linearGradient>
-                  </defs>
-                  <path d="M-50,180 C180,240 280,310 460,320 C620,330 750,420 1050,440 L1050,560 C780,520 620,440 440,430 C260,420 120,380 -50,330 Z" fill="url(#floodFlow)"></path>
-                  <path d="M420,50 C540,160 620,280 720,410 C810,520 910,610 1050,680 L960,700 C830,620 720,520 620,390 C530,260 450,140 370,60 Z" fill="url(#floodFlow)"></path>
-                  <ellipse className="animate-pulse" cx="440" cy="340" fill="url(#dangerFlow)" rx="140" ry="60"></ellipse>
-                  <path d="M320,310 Q450,290 570,350 Q430,390 320,310 Z" fill="none" opacity="0.8" stroke="#65d9c5" strokeDasharray="6,4" strokeWidth="1.5"></path>
-                  <path d="M720,480 L880,450 L910,560 L750,590 Z" fill="url(#diagonalHatch)"></path>
-                  <text fill="#d8e5ea" fontFamily="JetBrains Mono" fontSize="11" letterSpacing="1" x="760" y="530">UNVERIFIED EXP ZONE #09</text>
-                  <path d="M120,120 L380,280 L440,340" fill="none" stroke="#ffb4ab" strokeDasharray="8,6" strokeWidth="4"></path>
-                  <path d="M680,390 L840,460 L960,510" fill="none" stroke="#ffb4ab" strokeDasharray="8,6" strokeWidth="4"></path>
-                </svg>
-                {/* TACTICAL MAP MARKERS & BEACONS */}
-                <div className="absolute top-[28%] left-[34%] -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 bg-surface-container-lowest/90 px-2 py-0.5 rounded text-error font-telemetry-sm text-[10px] shadow-lg">
-                  <span className="material-symbols-outlined text-sm">no_crash</span>
-                  <span>Hub River Rd Cut</span>
-                </div>
-                <div className="absolute top-[58%] left-[78%] -translate-x-1/2 -translate-y-1/2 flex items-center gap-1 bg-surface-container-lowest/90 px-2 py-0.5 rounded text-error font-telemetry-sm text-[10px] shadow-lg">
-                  <span className="material-symbols-outlined text-sm">water_damage</span>
-                  <span>Causeway Overflow 1.4m</span>
-                </div>
-                {/* RESCUE ASSETS */}
-                <div className="absolute top-[44%] left-[48%] -translate-x-1/2 -translate-y-1/2 group cursor-pointer">
-                  <div className="relative flex items-center justify-center">
-                    <span className="absolute w-8 h-8 rounded-full bg-secondary/30 animate-ping"></span>
-                    <div className="w-7 h-7 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center shadow-lg">
-                      <span className="material-symbols-outlined text-base">directions_boat</span>
-                    </div>
-                  </div>
-                  <div className="absolute left-1/2 -translate-x-1/2 top-8 whitespace-nowrap bg-surface-container-lowest/90 text-secondary font-telemetry-sm text-[10px] px-2 py-0.5 rounded shadow pointer-events-none">
-                    Pak Navy Boat Unit 04
-                  </div>
-                </div>
-                <div className="absolute top-[32%] left-[24%] -translate-x-1/2 -translate-y-1/2 group cursor-pointer">
-                  <div className="w-7 h-7 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center shadow-lg">
-                    <span className="material-symbols-outlined text-base">emergency</span>
-                  </div>
-                  <div className="absolute left-1/2 -translate-x-1/2 top-8 whitespace-nowrap bg-surface-container-lowest/90 text-primary font-telemetry-sm text-[10px] px-2 py-0.5 rounded shadow pointer-events-none">
-                    Edhi 4x4 Amb #12
-                  </div>
-                </div>
-                <div className="absolute top-[20%] left-[64%] -translate-x-1/2 -translate-y-1/2 group cursor-pointer">
-                  <div className="w-6 h-6 rounded-full bg-surface-bright text-on-surface flex items-center justify-center shadow-lg">
-                    <span className="material-symbols-outlined text-sm">flight</span>
-                  </div>
-                  <div className="absolute left-1/2 -translate-x-1/2 top-7 whitespace-nowrap bg-surface-container-lowest/90 text-on-surface-variant font-telemetry-sm text-[10px] px-2 py-0.5 rounded shadow pointer-events-none">
-                    Thermal Drone D-2
-                  </div>
-                </div>
-                {/* CRITICAL RISK BEACONS */}
-                <div className="absolute top-[48%] left-[38%] -translate-x-1/2 -translate-y-1/2 z-20 group cursor-pointer" onClick={() => handleOpenCase('PK-KHI-7821')}>
-                  <div className="relative flex items-center justify-center">
-                    <span className="absolute w-12 h-12 rounded-full bg-error/40 animate-ping"></span>
-                    <span className="absolute w-8 h-8 rounded-full bg-error/60 blur-sm"></span>
-                    <div className="w-6 h-6 rounded-full bg-error text-on-error flex items-center justify-center shadow-[0_0_16px_rgba(229,83,61,0.8)]">
-                      <span className="material-symbols-outlined text-sm">priority_high</span>
-                    </div>
-                  </div>
-                  <div className="absolute left-6 -top-12 z-30 w-64 bg-surface-container-high/95 backdrop-blur-xl p-space-sm rounded-lg shadow-2xl opacity-95 group-hover:opacity-100 transition-opacity">
-                    <div className="flex items-center justify-between border-b border-surface-variant pb-1">
-                      <div className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-error animate-pulse"></span>
-                        <span className="font-headline-sm text-body-sm font-bold text-error">Tier 1 • Risk 98.4</span>
-                      </div>
-                      <span className="font-telemetry-sm text-[10px] text-tertiary">#SOS-7821</span>
-                    </div>
-                    <div className="mt-1 flex flex-col leading-tight">
-                      <span className="font-headline-sm text-body-sm font-bold text-on-surface">Fatima Bibi / فاطمہ بی بی</span>
-                      <span className="text-on-surface-variant font-body-sm text-[11px]">Lyari Sector 4-B | Age 78</span>
-                      <p className="font-body-sm text-error text-[11px] mt-1 font-semibold">⚠️ O₂ Concentrator Dead | Water +1.8m</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="absolute top-[62%] left-[58%] -translate-x-1/2 -translate-y-1/2 z-20 group cursor-pointer" onClick={() => handleOpenCase('PK-KHI-7822')}>
-                  <div className="relative flex items-center justify-center">
-                    <span className="absolute w-9 h-9 rounded-full bg-error/30 animate-pulse"></span>
-                    <div className="w-5 h-5 rounded-full bg-error text-on-error flex items-center justify-center shadow-[0_0_12px_rgba(229,83,61,0.6)]">
-                      <span className="material-symbols-outlined text-xs">accessible</span>
-                    </div>
-                  </div>
-                  <div className="absolute left-6 -top-6 hidden group-hover:flex z-30 w-52 bg-surface-container-high/95 p-2 rounded shadow-xl flex-col text-[11px]">
-                    <span className="font-bold text-on-surface">Bilal Ahmed (34)</span>
-                    <span className="text-error font-medium">Non-Ambulatory • Malir Edge</span>
-                  </div>
-                </div>
-                <div className="absolute top-[68%] left-[82%] -translate-x-1/2 -translate-y-1/2 z-20 group cursor-pointer">
-                  <div className="relative flex items-center justify-center">
-                    <div className="w-6 h-6 rounded-full bg-surface-variant flex items-center justify-center overflow-hidden shadow-lg shadow-black/60">
-                      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 24 24">
-                        <line stroke="#d6c3af" strokeWidth="2.5" x1="0" x2="24" y1="24" y2="0"></line>
-                        <line stroke="#d6c3af" strokeWidth="2.5" x1="-12" x2="12" y1="12" y2="-12"></line>
-                        <line stroke="#d6c3af" strokeWidth="2.5" x1="12" x2="36" y1="36" y2="12"></line>
-                      </svg>
-                      <span className="relative material-symbols-outlined text-xs text-on-surface">help</span>
-                    </div>
-                  </div>
-                  <div className="absolute left-7 -top-8 hidden group-hover:flex z-30 w-56 bg-surface-container-high p-2 rounded shadow-xl flex-col text-[11px]">
-                    <span className="font-bold text-outline">Mrs. Khan (Dialysis)</span>
-                    <span className="text-on-surface-variant">Korangi • No Cell Ping (3h 40m)</span>
-                    <span className="text-tertiary-container font-semibold">Assumed Max Hazard Exposure</span>
-                  </div>
-                </div>
-                <div className="absolute top-[28%] left-[76%] -translate-x-1/2 -translate-y-1/2 z-20 group cursor-pointer">
-                  <div className="w-5 h-5 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center shadow-[0_0_10px_rgba(242,169,59,0.5)]">
-                    <span className="material-symbols-outlined text-xs">family_restroom</span>
-                  </div>
-                </div>
-              </div>
-              {/* Bottom Floating Map Telemetry Strip */}
-              <div className="absolute bottom-2 left-2 right-2 z-20 bg-surface-container-low/85 backdrop-blur-md px-space-md py-space-xs rounded-lg flex flex-wrap items-center justify-between text-telemetry-sm font-telemetry-sm text-on-surface-variant">
+            {/* Live map (MapLibre): real basemap, case beacons, rescue assets, sensor flood zones, dispatch routes */}
+            <div className="relative w-full h-[520px] rounded-lg overflow-hidden bg-surface-container-lowest shadow-inner">
+              <LiveMap
+                ref={mapRef}
+                cases={cases}
+                assets={mapAssets}
+                sensors={mapSensors}
+                assignments={assignments}
+                area={selectedArea}
+                showAssets={showAssets}
+                showFlood={showFlood}
+                onSelectCase={handleOpenCase}
+              />
+              {/* Bottom floating legend + live hazard telemetry */}
+              <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none bg-surface-container-low/85 backdrop-blur-md px-space-md py-space-xs rounded-lg flex flex-wrap items-center justify-between text-telemetry-sm font-telemetry-sm text-on-surface-variant">
                 <div className="flex items-center gap-space-md">
                   <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-error"></span> Tier 1 Life Threat</span>
                   <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-primary"></span> Tier 2 Urgent</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-outline"></span> Hatched = Unknown Welfare</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-2 border-outline"></span> Ring = Unknown Welfare</span>
                 </div>
                 <div className="flex items-center gap-space-sm">
-                  <span className="text-secondary">Lyari Crest: 4.1m (Max Cap 4.5m)</span>
-                  <span className="text-outline-variant">|</span>
-                  <span className="text-primary">Wind: 34 kt SW Monsoon</span>
+                  {weather ? (
+                    <>
+                      <span className="text-secondary">Rain next 24h: {weather.rain24h ?? '--'} mm</span>
+                      <span className="text-outline-variant">|</span>
+                      <span className="text-primary">Peak: {weather.peakHourly ?? '--'} mm/h</span>
+                      <span className="text-outline-variant">|</span>
+                      <span>{weather.source === 'open-meteo' ? 'Open-Meteo live' : 'Demo clock'}</span>
+                    </>
+                  ) : (
+                    <span>Forecast not loaded</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -379,21 +260,17 @@ export default function CommandPage() {
             <div className="flex flex-wrap items-center justify-between gap-space-sm bg-surface-container/60 p-space-sm rounded-lg text-body-sm">
               <div className="flex items-center gap-space-md">
                 <label className="flex items-center gap-2 cursor-pointer text-on-surface">
-                  <input defaultChecked className="w-4 h-4 rounded accent-primary-container bg-surface-container-highest" type="checkbox" />
-                  <span className="font-medium text-body-sm">Inundation Layer (+2.5m)</span>
+                  <input checked={showFlood} onChange={(e) => setShowFlood(e.target.checked)} className="w-4 h-4 rounded accent-primary-container bg-surface-container-highest" type="checkbox" />
+                  <span className="font-medium text-body-sm">Sensor flood zones</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer text-on-surface">
-                  <input defaultChecked className="w-4 h-4 rounded accent-primary-container bg-surface-container-highest" type="checkbox" />
-                  <span className="font-medium text-body-sm">KE Grid Blackouts</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer text-on-surface">
-                  <input defaultChecked className="w-4 h-4 rounded accent-primary-container bg-surface-container-highest" type="checkbox" />
-                  <span className="font-medium text-body-sm">Field Assets (Boats/4x4)</span>
+                  <input checked={showAssets} onChange={(e) => setShowAssets(e.target.checked)} className="w-4 h-4 rounded accent-primary-container bg-surface-container-highest" type="checkbox" />
+                  <span className="font-medium text-body-sm">Rescue assets and sensors</span>
                 </label>
               </div>
               <div className="flex items-center gap-2 font-telemetry-sm text-telemetry-sm text-on-surface-variant">
-                <span>Projection Model:</span>
-                <span className="text-primary font-semibold">SWAT-Monsoon-V4</span>
+                <span>Forecast source:</span>
+                <span className="text-primary font-semibold">Open-Meteo</span>
               </div>
             </div>
           </div>

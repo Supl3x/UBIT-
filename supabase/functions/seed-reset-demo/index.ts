@@ -1,11 +1,13 @@
 import { adminClient, authorize, corsHeaders, json, readJson } from '../_shared/http.ts'
 import { audit, demoNowMs, loadConfig, resolveSimCase, runRecompute, runTick, setConfig } from '../_shared/core.ts'
+import { syncWeather } from '../_shared/weather.ts'
 
 // Demo control (coordinator only). POST { action, ...params }
 //   snapshot                  save the current data as the reset point
 //   reset                     restore the snapshot (takes one first if none exists)
 //   seed        { count }     add synthetic households (default 20)
-//   play_storm                heavy rain: more rain, shorter clock, evacuation stage
+//   play_storm                heavy rain: more rain, shorter clock, evacuation stage (locks the clock to the demo)
+//   live_weather              unlock the clock and refresh it from the live Open-Meteo forecast
 //   jump_time   { minutes }   move the demo clock forward and run a tick
 //   simulate_silence { case_id?, minutes }  age the open check-in and run the escalation ladder
 //   break_network { on }      mesh/network down toggle
@@ -90,8 +92,16 @@ Deno.serve(async (req) => {
         sim.rainMm = Math.max(Number(sim.rainMm || 0), 220)
         await setConfig(sb, 'simulation_state', sim)
         await setConfig(sb, 'hazard_countdown_seconds', 2400)
-        await setConfig(sb, 'hazard_state', { ...(cfg.hazard_state || {}), eta_at: null })
+        // 'demo' source locks the clock so the live forecast does not overwrite the rehearsal. Use live_weather to unlock.
+        await setConfig(sb, 'hazard_state', { ...(cfg.hazard_state || {}), source: 'demo', eta_at: null })
         break
+
+      case 'live_weather': {
+        await setConfig(sb, 'hazard_state', { ...(cfg.hazard_state || {}), source: 'open-meteo', fetched_at: null })
+        const wcfg = await loadConfig(sb)
+        detail = { weather: await syncWeather(sb, wcfg, true) }
+        break
+      }
 
       case 'jump_time': {
         const minutes = Math.max(1, Math.min(1440, Number(body.minutes) || 30))
@@ -132,7 +142,8 @@ Deno.serve(async (req) => {
 
       case 'set_mode': {
         const mode = body.mode === 'heatwave' ? 'heatwave' : 'flood'
-        await setConfig(sb, 'hazard_state', { ...(cfg.hazard_state || {}), mode, hazard: mode })
+        // fetched_at: null makes the next tick re-read the forecast for the new hazard type.
+        await setConfig(sb, 'hazard_state', { ...(cfg.hazard_state || {}), mode, hazard: mode, fetched_at: null })
         detail = { mode }
         break
       }

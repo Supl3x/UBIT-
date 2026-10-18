@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore, type Case, type Role } from '../store'
 import Modal from '../components/Modal'
@@ -199,6 +199,16 @@ export default function AdminDemoPage() {
     setHazardCountdown(2400)
     push({ en: 'Storm played: evacuation stage', ur: 'طوفان چلایا گیا: انخلا مرحلہ' })
     void backend('play_storm')
+  }
+
+  /** Hand the hazard clock back to the real Open-Meteo forecast (play-storm locks it to the demo script). */
+  const goLiveWeather = () => {
+    if (!backendReady()) {
+      showToast('Sign in with a Supabase account to use live weather', 'لائیو موسم کے لیے سپابیس اکاؤنٹ سے لاگ ان کریں', 'warning')
+      return
+    }
+    push({ en: 'Hazard clock now follows the live forecast', ur: 'گھڑی اب لائیو پیش گوئی کے مطابق ہے' })
+    void backend('live_weather')
   }
 
   const jumpTime = () => {
@@ -411,6 +421,9 @@ export default function AdminDemoPage() {
               </button>
               <button type="button" onClick={playStorm} className={`min-h-[48px] rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface font-semibold flex items-center justify-center gap-space-sm transition-all ${ur ? 'font-urdu-body' : ''}`}>
                 <span className="material-symbols-outlined text-tertiary">thunderstorm</span>{L(TXT.storm)}
+              </button>
+              <button type="button" onClick={goLiveWeather} className={`min-h-[48px] rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface font-semibold flex items-center justify-center gap-space-sm transition-all ${ur ? 'font-urdu-body' : ''}`}>
+                <span className="material-symbols-outlined text-secondary">cloud_sync</span>{ur ? 'لائیو موسم استعمال کریں' : 'Use live weather (Open-Meteo)'}
               </button>
               <button type="button" onClick={jumpTime} className={`min-h-[48px] rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface font-semibold flex items-center justify-center gap-space-sm transition-all ${ur ? 'font-urdu-body' : ''}`}>
                 <span className="material-symbols-outlined text-primary">update</span>{L(TXT.jump)}

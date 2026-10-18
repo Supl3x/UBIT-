@@ -151,13 +151,7 @@ function runExpression(expr: string, target: HTMLElement): boolean {
 }
 
 export function usePageInteractions(_page: string, nav: NavigateFunction) {
-  const tickCountdown = useStore((s) => s.tickCountdown)
-
-  useEffect(() => {
-    const id = window.setInterval(() => tickCountdown(), 1000)
-    return () => window.clearInterval(id)
-  }, [tickCountdown])
-
+  // The hazard clock is ticked once, globally, by TopBar. Ticking it here too made it run at double speed.
   useEffect(() => {
     const unsub = useStore.subscribe((s) => {
       const clock = formatClock(s.hazardCountdown)
@@ -272,13 +266,20 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
         toggleHidden(document.getElementById('sms-modal'), false)
       },
       triggerPrintExport: () => {
-        exportCsv('nlb-demo-export.csv', [['metric', 'value'], ['tracked', '1842'], ['tier1', '14']])
-        showToast('CSV exported', 'برآمد')
+        // The real priority list, ordered the way the coordinator sees it. Safe cases are left out.
+        const rows = [...store.cases].filter((c) => c.status !== 'safe').sort((a, b) => a.tier - b.tier || b.risk - a.risk)
+        exportCsv('nlb-priority-list.csv', [
+          ['rank', 'case_id', 'name', 'area', 'tier', 'risk', 'status', 'location', 'vulnerability'],
+          ...rows.map((c, i) => [String(i + 1), c.id, c.name, c.area, String(c.tier), c.risk.toFixed(1), c.status, c.location, c.vulnerability || '']),
+        ])
+        showToast(`Exported ${rows.length} households`, 'برآمد')
+        window.setTimeout(() => window.print(), 200)
       },
       openResetModal: () => toggleHidden(document.getElementById('reset-modal') || document.querySelector('[id*="reset"]'), true),
       closeResetModal: () => toggleHidden(document.getElementById('reset-modal') || document.querySelector('[id*="reset"]'), false),
       executeSystemReset: () => {
-        showToast('Demo state reset', 'ری سیٹ', 'warning')
+        const sent = withBackend(() => demoControl('reset'))
+        showToast(sent ? 'Demo state reset on the server' : 'Sign in with a Supabase account to reset the server data', 'ری سیٹ', sent ? 'warning' : 'info')
         toggleHidden(document.getElementById('reset-modal'), false)
       },
       switchAuditTab: () => {
@@ -294,8 +295,10 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
         if (arg0) showToast(`Seal ${arg0}`, 'کرپٹو مہر', 'info')
       },
       dispatchDirect: () => {
-        showToast(`Dispatch queued for ${arg0}`, 'روانگی')
-        store.addAuditEntry({ action: `Dispatch ${arg0}`, user: store.user?.name || 'Operator', caseId: 'PK-KHI-7821', type: 'dispatch' })
+        const c = store.cases.find((x) => x.id === String(arg0) || x.name === String(arg0))
+        if (!c) return showToast(`No case found for ${arg0}`, 'کیس نہیں ملا', 'warning')
+        store.dispatchCase(c.id)
+        showToast(`Dispatch queued for ${c.name}`, 'روانگی')
       },
       highlightResident: () => showToast(`Resident ${arg0} highlighted`, 'رہائشی'),
       submit: () => showToast('Form submitted', 'جمع'),
@@ -358,22 +361,16 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
 
       // ── Volunteer task detail ───────────────────────────────
       handleRescueOutcome: () => {
-        const kind = String(arg0)
-        const id = 'PK-KHI-7821'
-        if (kind === 'safe') {
-          store.markCaseSafe(id)
-          store.addAuditEntry({ action: 'Volunteer confirmed resident safe', user: store.user?.name || 'Volunteer', caseId: id, type: 'safe' })
-          showToast('Marked safe. Syncing when online.', 'محفوظ نشان ہو گیا۔ آن لائن ہوتے ہی سنک ہو گا۔')
-        } else if (kind === 'blocked') {
-          showToast('Route blocked reported to command', 'راستہ بند ہونے کی اطلاع کمانڈ کو دی گئی', 'warning')
-        } else {
-          showToast('Backup requested, boat dispatched', 'مدد طلب کر لی گئی، کشتی روانہ', 'error')
-        }
+        const id = store.selectedCaseId
+        if (!id) return showToast('Open a task first', 'پہلے ٹاسک کھولیں', 'warning')
+        const kind = String(arg0) === 'safe' ? 'safe' : String(arg0) === 'blocked' ? 'blocked' : 'backup'
+        store.reportFieldOutcome(id, kind)
+        showToast(kind === 'safe' ? 'Marked safe' : kind === 'blocked' ? 'Route blocked reported to command' : 'Backup requested', 'درج ہو گیا', kind === 'backup' ? 'error' : 'success')
       },
       togglePhotoPreview: () => el('photo-preview-box')?.classList.remove('hidden'),
       clearPhotoPreview: () => el('photo-preview-box')?.classList.add('hidden'),
       submitStatusUpdate: () => {
-        store.addAuditEntry({ action: 'Field status update submitted', user: store.user?.name || 'Volunteer', caseId: 'PK-KHI-7821', type: 'assign' })
+        if (store.selectedCaseId) store.reportFieldOutcome(store.selectedCaseId, 'note', 'Field status update submitted')
         showToast(store.isOnline ? 'Status submitted' : 'Saved offline, will sync later', store.isOnline ? 'حالت جمع ہو گئی' : 'آف لائن محفوظ، بعد میں سنک ہو گا')
       },
 
@@ -381,9 +378,9 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
       openFairnessModal: () => toggleHidden(el('fairness-modal'), true),
       closeFairnessModal: () => toggleHidden(el('fairness-modal'), false),
       confirmFairnessModal: () => {
+        // Fairness corrections now live on the Fairness page, where the area, multiplier and reason are chosen and validated on the server.
         toggleHidden(el('fairness-modal'), false)
-        store.addAuditEntry({ action: 'Equity redistribution applied (1.45x boost)', user: store.user?.name || 'Operator', caseId: 'BATCH', type: 'override', reason: 'Cellular blackout correction' })
-        showToast('Equity correction applied and logged', 'مساوات کی درستگی لاگو اور درج ہو گئی')
+        nav('/quality/fairness')
       },
     }
 
@@ -422,8 +419,6 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
 
     const btn = t.closest('button')
     if (!btn) {
-      const beacon = t.closest('.cursor-pointer, article')
-      if (beacon && textOf(beacon).includes('Fatima')) store.openCaseDrawer('PK-KHI-7821')
       return
     }
     // Buttons with an explicit action were fully handled above; skip text-sniffing for them.
@@ -447,9 +442,12 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
       store.toggleOnline()
     }
     if (label.includes('Open Case') || label.includes('کیس کھولیں')) {
-      store.openCaseDrawer('PK-KHI-7821')
-      nav('/command')
-      window.setTimeout(() => useStore.getState().openCaseDrawer('PK-KHI-7821'), 50)
+      const top = [...store.cases].filter((c) => c.status !== 'safe').sort((a, b) => a.tier - b.tier || b.risk - a.risk)[0]
+      const id = store.selectedCaseId || top?.id
+      if (id) {
+        nav('/command')
+        window.setTimeout(() => useStore.getState().openCaseDrawer(id), 50)
+      }
     }
     if (label.includes('Dispatch Scout') || label.includes('Assign Evac') || label.includes('انخلاء')) {
       showToast('Assignment queued', 'تفویض')
@@ -481,30 +479,8 @@ export function usePageInteractions(_page: string, nav: NavigateFunction) {
       store.login(ROLE_USERS.viewer)
       nav('/quality/audit')
     }
-    if (label.includes('Accept') || label.includes('قبول')) {
-      store.addAuditEntry({ action: 'Accepted recommendation', user: store.user?.name || 'Zara Khan', caseId: store.selectedCaseId || 'PK-KHI-7821', type: 'accept' })
-      showToast('Recommendation accepted', 'سفارش قبول')
-    }
-    if (label.includes('Override') || label.includes('اوور رائیڈ')) {
-      const reason = window.prompt('Override reason / وجہ', 'Resource constraints') || 'Unspecified'
-      store.addAuditEntry({ action: 'Override', user: store.user?.name || 'Zara Khan', caseId: store.selectedCaseId || 'PK-KHI-7821', reason, type: 'override' })
-      showToast('Override recorded', 'اوور رائیڈ')
-    }
-    if (label.includes('Mark Safe') || label.includes('محفوظ')) {
-      store.markCaseSafe(store.selectedCaseId || 'PK-KHI-7821')
-      store.addAuditEntry({ action: 'Marked safe', user: store.user?.name || 'Bilal Ahmed', caseId: store.selectedCaseId || 'PK-KHI-7821', type: 'safe' })
-      showToast('Resident marked safe', 'محفوظ')
-    }
-    if (label.includes('Reached') || label.includes('Found Safe')) {
-      store.markCaseSafe('PK-KHI-7821')
-      showToast('Reached & found safe', 'پہنچا اور محفوظ')
-    }
-    if (label.includes("Can't Reach") || label.includes('Blocked') || label.includes('نہیں پہنچ')) {
-      showToast('Cannot reach / blocked', 'راستہ بند', 'warning')
-    }
-    if (label.includes('Backup') || label.includes('مدد چاہیے')) {
-      showToast('Backup requested', 'بیک اپ', 'error')
-    }
+    // Accept / Override / Mark Safe / field outcomes are no longer guessed from button text (that could act on the wrong
+    // case). They are real buttons in CaseDrawerPage and TaskDetailPage that call the store, which validates on the server.
     if (label.includes('Sync Now') || label.includes('ابھی سنک') || label.includes('sync')) {
       if (/sync/i.test(label) && (label.includes('Now') || label.includes('سنک') || label.includes('Retry'))) {
         store.syncOutbox()

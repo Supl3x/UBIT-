@@ -5,6 +5,12 @@ import { useStore } from '../store'
 export async function hydrateFromSupabase() {
   if (!supabaseConfigured) return
   const { data: { session } } = await supabase.auth.getSession()
+  const offline = !useStore.getState().isOnline || !navigator.onLine
+  if (offline) {
+    // Keep the cached snapshot; only restore the session identity (read from local storage, no network needed).
+    useStore.getState().setAuthUserId(session?.user?.id || null)
+    return
+  }
   const uid = session?.user?.id || null
   useStore.getState().setAuthUserId(uid)
   if (uid) {

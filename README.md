@@ -10,6 +10,7 @@
 * **Team Members:**
   * **Muhammad Feras Malik**
   * **Muhammad Ahmed Khan**
+  * **Muhammad Sarim Umer**
   * *(Additional team members can be added here)*
 
 ---
@@ -120,6 +121,11 @@ The core philosophy of the system is:
   * `telegram-webhook`: Telegram Bot API integration for resident responses.
   * `intake-parse`: NLP parser for Roman Urdu emergency text extraction.
   * `seed-reset-demo`: Administrative snapshotting, scenario loading, and state reset.
+  * `weather-sync`: Pulls the Open-Meteo forecast and turns it into the hazard clock (time to impact). No API key.
+  * `case-action`: Server-enforced human decisions (accept, override with a written reason, safe, dispatch, fairness corrections), each written to the insert-only audit log.
+  * `twilio-webhook`: Optional. Receives real SMS replies (1 / 2 / 3) when Twilio is configured; otherwise SMS and voice are simulated.
+* **Offline-first volunteer app:** every write goes through an IndexedDB outbox that replays in order when the connection returns, and a service worker caches the app shell and map tiles.
+* **Map:** MapLibre GL with CARTO / OpenStreetMap tiles (no API key). Optional MapTiler or Stadia style via `VITE_MAP_STYLE_URL` and `VITE_MAP_API_KEY`. See `.env.example`.
 * **Open-Meteo API:** Live meteorological forecasts and real-time precipitation monitoring.
 * **Vercel:** High-availability edge hosting with continuous deployment from GitHub.
 

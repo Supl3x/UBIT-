@@ -14,10 +14,26 @@ export async function callFn<T = Record<string, unknown>>(name: string, body: Re
 
 export type DemoAction =
   | 'snapshot' | 'reset' | 'seed' | 'play_storm' | 'jump_time' | 'break_network'
-  | 'close_road' | 'boat_broken' | 'set_mode' | 'simulate_silence'
+  | 'close_road' | 'boat_broken' | 'set_mode' | 'simulate_silence' | 'live_weather'
 
 export const demoControl = (action: DemoAction, params: Record<string, unknown> = {}) => callFn('seed-reset-demo', { action, ...params })
 export const recompute = () => callFn('recompute')
+export const weatherSync = (force = false) => callFn('weather-sync', { force })
+
+export type CaseActionName = 'accept' | 'override' | 'safe' | 'dispatch'
+/** Human decisions are validated on the server (an override needs a written reason) and written to the audit log. */
+export const caseAction = (action: CaseActionName, caseId: string, extra: { reason?: string; tier?: number } = {}) =>
+  callFn('case-action', { action, case_id: caseId, ...extra })
+
+export type FairnessArea = {
+  area: string; households: number; tier1: number; avg_risk: number; reports_24h: number; report_rate: number
+  report_ratio: number; flagged: boolean; suggested_multiplier: number; applied_multiplier: number
+}
+export const fairnessStats = () =>
+  callFn<{ city_report_rate: number; city_avg_risk: number; areas: FairnessArea[] }>('case-action', { action: 'fairness_stats' })
+export const fairnessApply = (area: string, multiplier: number, reason: string) =>
+  callFn('case-action', { action: 'fairness_apply', area, multiplier, reason })
+export const fairnessClear = (area?: string) => callFn('case-action', { action: 'fairness_clear', area })
 export const tick = () => callFn('tick')
 export const sendMessage = (caseId: string, kind: 'checkin' | 'alert' | 'custom', extra: Record<string, unknown> = {}) =>
   callFn('send-message', { case_id: caseId, kind, ...extra })

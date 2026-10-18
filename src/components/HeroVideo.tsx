@@ -1,23 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 
-const BASE = import.meta.env.VITE_MEDIA_BASE_URL || ''
-const NAMES = ['1.mp4', '3.mp4', '4.mp4']
-const CLIPS = BASE ? NAMES.map(n => `${BASE}/${n}`) : []
-const SPEED = 0.5
+/**
+ * Clips are NOT bundled with the app (large files do not belong in git or in the Vite build).
+ * They are served from a storage bucket. Set VITE_MEDIA_BASE_URL to the bucket's public folder, for example
+ *   https://<project>.supabase.co/storage/v1/object/public/media
+ * and upload 1.mp4, 3.mp4 and 4.mp4 there. Without it the hero simply shows the dark background.
+ */
+const BASE = ((import.meta.env.VITE_MEDIA_BASE_URL as string | undefined) || '').replace(/\/+$/, '')
+const CLIPS = BASE ? ['1.mp4', '3.mp4', '4.mp4'].map((f) => `${BASE}/${f}`) : [] // playback order 1, 3, 4, then loop
+const SPEED = 0.5 // slow motion
 
 /**
- * Background playlist. Every clip is stretched to fill the same box
- * (absolute inset-0 + object-cover), so all of them render at an identical size
- * regardless of their source resolution. Clips play in slow motion and crossfade.
- * 
- * Videos are loaded from VITE_MEDIA_BASE_URL. If not set, shows a plain dark background.
+ * Background playlist. Every clip fills the same box (absolute inset-0 + object-cover). Only the clip that is
+ * playing (and the next one) is loaded, so the page does not download every clip up front.
  */
 export default function HeroVideo({ className = '' }: { className?: string }) {
   const refs = useRef<(HTMLVideoElement | null)[]>([])
   const [active, setActive] = useState(0)
-  const nextIdx = (active + 1) % CLIPS.length
+  const next = (active + 1) % CLIPS.length
 
-  // Play only the active clip, restart it, and apply the slow-mo rate.
   useEffect(() => {
     if (!CLIPS.length) return
     refs.current.forEach((v, i) => {
@@ -33,7 +34,7 @@ export default function HeroVideo({ className = '' }: { className?: string }) {
   }, [active])
 
   // No URL configured: show plain dark background
-  if (!CLIPS.length) {
+  if (CLIPS.length === 0) {
     return <div className={`absolute inset-0 bg-gray-900 ${className}`} aria-hidden="true" />
   }
 
@@ -46,11 +47,11 @@ export default function HeroVideo({ className = '' }: { className?: string }) {
           src={src}
           muted
           playsInline
-          preload={i === active || i === nextIdx ? 'auto' : 'none'}
+          preload={i === active || i === next ? 'auto' : 'none'}
           onLoadedMetadata={(e) => { e.currentTarget.playbackRate = SPEED }}
           onPlay={(e) => { e.currentTarget.playbackRate = SPEED }}
-          onEnded={() => i === active && setActive((a) => (a + 1) % CLIPS.length)}
-          onError={() => i === active && setActive((a) => (a + 1) % CLIPS.length)}
+          onEnded={() => i === active && setActive(next)}
+          onError={() => i === active && setActive(next)}
           className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-[900ms] ease-in-out ${i === active ? 'opacity-100' : 'opacity-0'}`}
         />
       ))}

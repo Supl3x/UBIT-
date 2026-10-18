@@ -1,9 +1,16 @@
 {
   "name": "Nobody Left Behind",
   "short_name": "NLB",
+  "description": "Disaster triage, vulnerability-first warning and resource dispatch. Works offline.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#091519",
   "theme_color": "#091519",
-  "lang": "en"
+  "lang": "en",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
 }

@@ -37,6 +37,8 @@ export type ScoreInput = {
   mode: string
   rules: Rules
   silenceMin: number
+  /** Fairness correction for areas that under-report (1 = none). Applied to the risk, never to the confidence. */
+  riskMultiplier?: number
 }
 
 export type ScoreResult = {
@@ -83,6 +85,8 @@ export function score(i: ScoreInput): ScoreResult {
   )
   // Unknown is never "safe": it is high exposure and needs a welfare check (at least Tier 2).
   if (i.unknown) risk = Math.max(risk, 56)
+  // Fairness correction: quiet areas report less, so they must not be ranked lower for being quiet.
+  if (i.riskMultiplier && i.riskMultiplier !== 1) risk = clamp(risk * i.riskMultiplier)
 
   let confidence = i.confidence ?? 85
   if (i.unknown) confidence = Math.min(confidence, 60)
