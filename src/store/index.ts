@@ -1,8 +1,29 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { INITIAL_COMMUNITY_SHELTERS, type CommunityShelter } from '../data/communityShelters'
-import type { BuddyHousehold, FieldTask, OfficialShelter, Snapshot } from '../lib/db'
+import type { BuddyHousehold, FieldTask, MapAsset, MapSensor, OfficialShelter, Snapshot, WeatherInfo } from '../lib/db'
 import * as db from '../lib/db'
+import { flushOutbox, setOnline as setOutboxOnline, type OutboxRecord } from '../lib/outbox'
+import { supabaseConfigured } from '../lib/supabase'
+
+type Decision = 'accept' | 'override' | 'safe' | 'dispatch'
+
+/**
+ * Human decisions go through the `case-action` edge function when there is a real session and a connection, so the
+ * server enforces the rules (an override needs a written reason) and writes the audit log with before/after state.
+ * Offline, or without a Supabase session, the caller falls back to the optimistic local path + offline outbox.
+ */
+async function remoteDecision(action: Decision, caseId: string, extra: { reason?: string; tier?: number } = {}) {
+  const [{ caseAction }, { hydrateFromSupabase }] = await Promise.all([import('../lib/functions'), import('../lib/session')])
+  try {
+    await caseAction(action, caseId, extra)
+    await hydrateFromSupabase()
+  } catch (e) {
+    const msg = (e as Error).message
+    useStore.getState().showToast(`Server: ${msg}`, `سرور: ${msg}`, 'error')
+    await hydrateFromSupabase() // roll the optimistic change back to the server's truth
+  }
+}
 
 export type Role = 'coordinator' | 'volunteer' | 'registrar' | 'shelter' | 'viewer'
 export type Language = 'en' | 'ur'
@@ -30,12 +51,20 @@ export interface Case {
   vulnerability: string
   area: 'lyari' | 'malir' | 'korangi'
   unknown?: boolean
+  /** Map position. Sensitive households are snapped to ~1 km; no point falls back to the area centroid. */
+  lat?: number
+  lng?: number
+  exactLocation?: boolean
+  hideExact?: boolean
+  confidence?: number
+  phone?: string
 }
 
 export interface Assignment {
   id: string
   caseId: string
   caseName: string
+  assetId?: string
   asset: 'boat' | 'ambulance' | 'team'
   assetLabel: string
   status: 'queued' | 'approved' | 'dispatched'
@@ -118,6 +147,9 @@ interface AppState {
   officialShelter: OfficialShelter | null
   buddyHouseholds: BuddyHousehold[]
   fieldTasks: FieldTask[]
+  mapAssets: MapAsset[]
+  mapSensors: MapSensor[]
+  weather: WeatherInfo | null
   authUserId: string | null
   dbReady: boolean
   resident: {
@@ -134,6 +166,14 @@ interface AppState {
   setLanguage: (lang: Language) => void
   toggleTheme: () => void
   toggleOnline: () => void
+  setOnline: (online: boolean) => void
+  setSyncItems: (items: OutboxRecord[]) => void
+  overrideCase: (id: string, reason: string, tier?: 1 | 2 | 3) => void
+  canUseServer: () => boolean
+  /** Volunteer outcomes from the field. Works offline: writes are queued in the outbox. */
+  reportFieldOutcome: (caseId: string, kind: 'safe' | 'blocked' | 'backup' | 'note', notes?: string, taskId?: string) => void
+  recordBuddyOutcome: (householdId: string, outcome: 'safe' | 'needs_help' | 'evacuate' | 'not_home', notes?: string) => void
+  setFieldTaskStatus: (id: string, status: 'queued' | 'in_progress' | 'completed' | 'blocked', notes?: string) => void
   openCaseDrawer: (id: string) => void
   closeCaseDrawer: () => void
   showToast: (msg: string, msgUrdu: string, type: ToastState['type']) => void
@@ -189,12 +229,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
   { id: 'asg-5', caseId: 'PK-KHI-7825', caseName: 'Khurram Javed', asset: 'team', assetLabel: 'Scout Squad E-1', status: 'queued', pinned: false, etaMin: 32 },
 ]
 
-const INITIAL_SYNC: SyncItem[] = [
-  { id: 's1', title: 'Status Update: Fatima Bibi', description: 'Volunteer reached doorstep; verified water level 1.1m; request boat stretcher urgently.', status: 'queued', progress: 0, time: '15:22 PKT', priority: 1 },
-  { id: 's2', title: 'Buddy Check-in: Zubaida Begum', description: 'Marked: Needs Help (Infant ORS requested); Photo attached (340 KB).', status: 'syncing', progress: 64, time: '15:08 PKT', priority: 2 },
-  { id: 's3', title: 'Road Closure: Gul Muhammad', description: 'Marked impassable due to live downed electric cable in flood water.', status: 'queued', progress: 0, time: '15:28 PKT', priority: 3 },
-  { id: 's4', title: 'Check-in: Chacha Rustam', description: 'Marked: Safe / محفوظ', status: 'synced', progress: 100, time: '14:48 PKT', priority: 4 },
-]
+
 
 const INITIAL_AUDIT: AuditEntry[] = [
   { id: 'a1', action: 'Case accepted for dispatch', user: 'Zara Khan', caseId: 'PK-KHI-7820', timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(), type: 'accept' },
@@ -221,7 +256,7 @@ export const useStore = create<AppState>()(
       toast: { visible: false, message: '', messageUrdu: '', type: 'info' },
       cases: INITIAL_CASES,
       assignments: INITIAL_ASSIGNMENTS,
-      syncItems: INITIAL_SYNC,
+      syncItems: [],
       auditLog: INITIAL_AUDIT,
       timeline: [],
       notifications: [
@@ -242,6 +277,9 @@ export const useStore = create<AppState>()(
       officialShelter: null,
       buddyHouseholds: [],
       fieldTasks: [],
+      mapAssets: [],
+      mapSensors: [],
+      weather: null,
       authUserId: null,
       dbReady: false,
       navOpen: false,
@@ -276,7 +314,98 @@ export const useStore = create<AppState>()(
         document.documentElement.classList.remove('light', 'dark')
         document.documentElement.classList.add(nt)
       },
-      toggleOnline: () => set((s) => ({ isOnline: !s.isOnline })),
+      toggleOnline: () => get().setOnline(!get().isOnline),
+      setOnline: (online) => {
+        set({ isOnline: online })
+        setOutboxOnline(online)
+      },
+      setSyncItems: (items) => {
+        const toItem = (r: OutboxRecord): SyncItem => ({
+          id: r.id,
+          title: r.title,
+          description: r.description || '',
+          status: r.status,
+          progress: r.status === 'synced' ? 100 : r.status === 'syncing' ? 60 : 0,
+          time: new Date(r.createdAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) + ' PKT',
+          priority: r.priority ?? 3,
+        })
+        const live = items
+          .filter((r) => r.status !== 'synced')
+          .sort((a, b) => (a.priority ?? 3) - (b.priority ?? 3) || a.createdAt.localeCompare(b.createdAt))
+        const done = items.filter((r) => r.status === 'synced').reverse()
+        set({ syncItems: [...live, ...done].map(toItem) })
+      },
+      overrideCase: (id, reason, tier) => {
+        const s = get()
+        const c = s.cases.find((x) => x.id === id)
+        const newTier = tier ?? c?.tier ?? 2
+        set({
+          cases: s.cases.map((x) => (x.id === id ? { ...x, status: 'overridden' as const, tier: newTier } : x)),
+          auditLog: [
+            { id: `a${Date.now()}`, action: `Override: ${c?.name || id} set to Tier ${newTier}`, user: s.user?.name || 'Coordinator', caseId: id, timestamp: new Date().toISOString(), reason, type: 'override' as const },
+            ...s.auditLog,
+          ],
+        })
+        if (s.canUseServer()) {
+          void remoteDecision('override', id, { reason, tier: newTier })
+          return
+        }
+        // Offline: queue the plain writes. The audit row is insert-only and carries the required reason.
+        void db.updateCase(id, { status: 'overridden', tier: newTier })
+        void db.insertAudit({ action: `Override: ${c?.name || id} set to Tier ${newTier}`, user: s.user?.name || 'Coordinator', caseId: id, type: 'override', reason, role: s.user?.role })
+      },
+      reportFieldOutcome: (caseId, kind, notes, taskId) => {
+        const s = get()
+        const c = s.cases.find((x) => x.id === caseId)
+        const who = s.user?.name || 'Volunteer'
+        const name = c?.name || caseId
+        const note = notes?.trim()
+        const text =
+          kind === 'safe' ? `Reached ${name}: found safe${note ? ` (${note})` : ''}`
+          : kind === 'blocked' ? `Could not reach ${name}${note ? `: ${note}` : ''}`
+          : kind === 'backup' ? `BACKUP requested for ${name}${note ? `: ${note}` : ''}`
+          : `Field note on ${name}: ${note || ''}`
+        const auditType = kind === 'safe' ? 'safe' : 'assign'
+
+        get().addTimeline(caseId, `${text} (${who})`)
+        // "safe" is audited by markCaseSafe below (server or local), so only the other outcomes are logged here.
+        if (kind !== 'safe') get().addAuditEntry({ action: text, user: who, caseId, type: auditType, reason: note })
+        if (taskId) {
+          get().setFieldTaskStatus(taskId, kind === 'safe' ? 'completed' : kind === 'note' ? 'in_progress' : 'blocked', note)
+        }
+        if (kind === 'safe') {
+          get().markCaseSafe(caseId)
+        } else if (kind === 'backup') {
+          // Raise to Tier 1 locally and tell the command centre. The next recompute keeps it honest.
+          set((st) => ({ cases: st.cases.map((x) => (x.id === caseId ? { ...x, tier: 1 as const } : x)) }))
+          void db.updateCase(caseId, { tier: 1 })
+        }
+        if (kind === 'blocked' || kind === 'backup') {
+          void db.insertNotification({
+            audience_role: 'coordinator', type: kind === 'backup' ? 'backup' : 'blocked', related_case_id: caseId,
+            text: `${who}: ${text}`, text_urdu: `${who}: ${text}`,
+          })
+        }
+      },
+      recordBuddyOutcome: (householdId, outcome, notes) => {
+        const s = get()
+        const h = s.buddyHouseholds.find((x) => x.id === householdId)
+        set({ buddyHouseholds: s.buddyHouseholds.map((x) => (x.id === householdId ? { ...x, outcome } : x)) })
+        void db.updateBuddyHousehold(householdId, { last_outcome: outcome, ...(notes ? { notes } : {}) })
+        void db.insertBuddyCheckin({ household_id: householdId, outcome, notes })
+        if (outcome === 'needs_help' || outcome === 'evacuate') {
+          void db.insertNotification({
+            audience_role: 'coordinator', type: 'buddy',
+            text: `Buddy check-in: ${h?.name || householdId} ${outcome === 'evacuate' ? 'must evacuate' : 'needs help'}`,
+            text_urdu: `Buddy check-in: ${h?.nameUrdu || h?.name || householdId}`,
+          })
+        }
+        get().addAuditEntry({ action: `Buddy check-in: ${h?.name || householdId} ${outcome}`, user: s.user?.name || 'Volunteer', caseId: '', type: 'assign', reason: notes })
+      },
+      setFieldTaskStatus: (id, status, notes) => {
+        set((s) => ({ fieldTasks: s.fieldTasks.map((t) => (t.id === id ? { ...t, status } : t)) }))
+        void db.updateFieldTask(id, { status, ...(notes ? { notes } : {}) })
+      },
       openCaseDrawer: (id) => set({ showCaseDrawer: true, selectedCaseId: id }),
       closeCaseDrawer: () => set({ showCaseDrawer: false, selectedCaseId: null }),
       showToast: (msg, msgUrdu, type) => {
@@ -284,14 +413,32 @@ export const useStore = create<AppState>()(
         setTimeout(() => get().hideToast(), 2800)
       },
       hideToast: () => set((s) => ({ toast: { ...s.toast, visible: false } })),
+      canUseServer: () => supabaseConfigured && !!get().authUserId && get().isOnline,
       markCaseSafe: (id) => {
-        set((s) => ({ cases: s.cases.map((c) => (c.id === id ? { ...c, status: 'safe' as const } : c)) }))
+        const s = get()
+        const c = s.cases.find((x) => x.id === id)
+        const action = `${c?.name || id} marked safe`
+        set({
+          cases: s.cases.map((x) => (x.id === id ? { ...x, status: 'safe' as const } : x)),
+          auditLog: [{ id: `a${Date.now()}`, action, user: s.user?.name || 'System', caseId: id, timestamp: new Date().toISOString(), type: 'safe' as const }, ...s.auditLog],
+        })
+        if (s.canUseServer()) {
+          void remoteDecision('safe', id) // the server writes the audit row itself
+          return
+        }
         void db.updateCase(id, { status: 'safe' })
+        void db.insertAudit({ action, user: s.user?.name || 'System', caseId: id, type: 'safe', role: s.user?.role })
       },
       dispatchCase: (id, asset) => {
         const s = get()
         const c = s.cases.find((x) => x.id === id)
         const newAssignment: Assignment = { id: `asg-${Date.now()}`, caseId: id, caseName: c?.name || id, asset: asset || 'boat', assetLabel: asset === 'ambulance' ? 'Ambulance' : asset === 'team' ? 'Scout Team' : 'Boat Unit', status: 'dispatched', pinned: false, etaMin: Math.floor(Math.random() * 15 + 8) }
+        if (s.canUseServer()) {
+          // The optimizer already proposed an asset for this case: approve and dispatch exactly that one.
+          set({ cases: s.cases.map((x) => (x.id === id ? { ...x, status: 'dispatched' as const } : x)) })
+          void remoteDecision('dispatch', id)
+          return
+        }
         set({
           cases: s.cases.map((x) => (x.id === id ? { ...x, status: 'dispatched' as const } : x)),
           assignments: [newAssignment, ...s.assignments],
@@ -309,6 +456,10 @@ export const useStore = create<AppState>()(
           cases: s.cases.map((c) => (c.id === id ? { ...c, status: 'accepted' as const } : c)),
           auditLog: [{ id: `a${Date.now()}`, action: 'Recommendation accepted', user: s.user?.name || 'System', caseId: id, timestamp: new Date().toISOString(), type: 'accept' as const }, ...s.auditLog],
         })
+        if (s.canUseServer()) {
+          void remoteDecision('accept', id)
+          return
+        }
         void db.updateCase(id, { status: 'accepted' })
         void db.insertAudit({ action: 'Recommendation accepted', user: s.user?.name || 'System', caseId: id, type: 'accept', role: s.user?.role })
       },
@@ -383,17 +534,8 @@ export const useStore = create<AppState>()(
       },
       setPlayback: (partial) => set((s) => ({ playback: { ...s.playback, ...partial } })),
       syncOutbox: () => {
-        const queued = get().syncItems.filter((i) => i.status === 'queued')
-        set((s) => ({ syncItems: s.syncItems.map((i) => i.status === 'queued' ? { ...i, status: 'syncing' as const, progress: 10 } : i) }))
-        queued.forEach((i) => void db.updateSyncItem(i.id, { status: 'syncing', progress: 10 }))
-        setTimeout(() => {
-          set((s) => ({ syncItems: s.syncItems.map((i) => i.status === 'syncing' ? { ...i, progress: 50 } : i) }))
-        }, 800)
-        setTimeout(() => {
-          const ids = get().syncItems.filter((i) => i.status === 'syncing').map((i) => i.id)
-          set((s) => ({ syncItems: s.syncItems.map((i) => i.status === 'syncing' ? { ...i, status: 'synced' as const, progress: 100 } : i) }))
-          ids.forEach((id) => void db.updateSyncItem(id, { status: 'synced', progress: 100, synced_at: new Date().toISOString() }))
-        }, 2000)
+        // Replays the real IndexedDB outbox. While offline nothing is sent and the items stay queued.
+        void flushOutbox()
       },
       markAllNotificationsRead: () => {
         set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) }))
@@ -403,7 +545,12 @@ export const useStore = create<AppState>()(
       addRegistration: (r) => {
         const row = { id: `reg-${Date.now()}`, ...r, time: new Date().toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) }
         set((s) => ({ registrations: [row, ...s.registrations] }))
-        void db.insertRegistration({ ...r, registrarId: get().authUserId || undefined })
+        const registrarId = get().authUserId || undefined
+        const save = (lat?: number, lng?: number) => void db.insertRegistration({ ...r, registrarId, lat, lng })
+        // GPS works without mobile data. If it is denied or slow, the registration is still saved, just without a point.
+        if (typeof navigator !== 'undefined' && navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition((p) => save(p.coords.latitude, p.coords.longitude), () => save(), { timeout: 4000, maximumAge: 60_000 })
+        } else save()
       },
       addCommunityShelter: (sh) => {
         set((s) => ({ communityShelters: [sh, ...s.communityShelters] }))
@@ -414,7 +561,7 @@ export const useStore = create<AppState>()(
         set((s) => ({
           communityShelters: s.communityShelters.map((x) => (x.id === id ? { ...x, free: Math.max(0, x.free - people) } : x)),
         }))
-        void db.reserveShelter(id, people, cur?.free ?? people)
+        void db.reserveShelter(id, people, cur?.capacity ?? people, cur?.free ?? people)
       },
       setAlertLevel: (lv) => {
         set({ alertLevel: lv })
@@ -439,7 +586,6 @@ export const useStore = create<AppState>()(
         set({
           cases: snap.cases,
           assignments: snap.assignments,
-          syncItems: snap.syncItems,
           auditLog: snap.auditLog,
           timeline: snap.timeline,
           notifications: snap.notifications,
@@ -449,6 +595,9 @@ export const useStore = create<AppState>()(
           officialShelter: snap.officialShelter,
           buddyHouseholds: snap.buddyHouseholds,
           fieldTasks: snap.fieldTasks,
+          mapAssets: snap.mapAssets,
+          mapSensors: snap.mapSensors,
+          weather: snap.weather,
           alertLevel: snap.alertLevel,
           hazardCountdown: snap.hazardCountdown,
           sim: sim ? { ...get().sim, ...sim } : get().sim,
@@ -459,8 +608,14 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'nlb-app-state',
+      // Cache the last snapshot so a volunteer can reload the app with no connection and keep working.
       partialize: (s) => ({
-        language: s.language, theme: s.theme, isOnline: s.isOnline,
+        language: s.language, theme: s.theme,
+        user: s.user, authUserId: s.authUserId,
+        cases: s.cases, assignments: s.assignments, fieldTasks: s.fieldTasks, buddyHouseholds: s.buddyHouseholds,
+        timeline: s.timeline, mapAssets: s.mapAssets, mapSensors: s.mapSensors, weather: s.weather,
+        officialShelter: s.officialShelter, communityShelters: s.communityShelters,
+        alertLevel: s.alertLevel, hazardCountdown: s.hazardCountdown,
       }),
     }
   )

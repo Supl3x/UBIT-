@@ -5,7 +5,7 @@ import Modal from '../components/Modal'
 import { describeRoute, sendMessage, withBackend } from '../lib/functions'
 
 export default function CaseDrawerPage() {
-  const { selectedCaseId, cases, closeCaseDrawer, dispatchCase, markCaseSafe, acceptCase, assignVolunteer, addAuditEntry, addTimeline, showToast, timeline } = useStore()
+  const { selectedCaseId, cases, closeCaseDrawer, dispatchCase, markCaseSafe, acceptCase, overrideCase, assignVolunteer, addAuditEntry, addTimeline, showToast, timeline } = useStore()
   const [showSafeConfirm, setShowSafeConfirm] = useState(false)
   const [showOverride, setShowOverride] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
@@ -30,14 +30,14 @@ export default function CaseDrawerPage() {
   }
   const handleMarkSafe = () => {
     markCaseSafe(selectedCase.id)
-    addAuditEntry({ action: 'Case marked as safe', user: useStore.getState().user?.name || 'Coordinator', caseId: selectedCase.id, type: 'safe' })
     showToast(t('caseMarkedSafe', 'en'), t('caseMarkedSafe', 'ur'), 'success')
     closeCaseDrawer()
     setShowSafeConfirm(false)
   }
   const handleOverride = () => {
-    if (!overrideReason.trim()) return
-    addAuditEntry({ action: `Override: ${overrideReason}`, user: useStore.getState().user?.name || 'Coordinator', caseId: selectedCase.id, reason: overrideReason, type: 'override' })
+    if (overrideReason.trim().length < 8) return
+    // The server re-checks this: an override with no real reason is rejected there too.
+    overrideCase(selectedCase.id, overrideReason.trim())
     showToast(t('caseOverridden', 'en'), t('caseOverridden', 'ur'), 'warning')
     setShowOverride(false)
     setOverrideReason('')
@@ -279,10 +279,10 @@ export default function CaseDrawerPage() {
 
         <Modal isOpen={showOverride} onClose={() => setShowOverride(false)} title="Override Recommendation" titleUrdu="تجویز پر اعتراض">
           <p className="font-body-sm text-body-sm text-on-surface-variant mb-space-sm">You are overriding the algorithmic recommendation for <strong className="text-on-surface">{selectedCase.name}</strong>. A reason is required for the audit log.</p>
-          <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Enter reason for override..." rows={3} className="w-full px-space-sm py-2 bg-surface-container rounded-lg text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-1 focus:ring-primary-container resize-none" />
+          <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Enter reason for override (at least 8 characters)..." rows={3} className="w-full px-space-sm py-2 bg-surface-container rounded-lg text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-1 focus:ring-primary-container resize-none" />
           <div className="flex justify-end gap-space-sm mt-space-md">
             <button onClick={() => setShowOverride(false)} className="px-space-md py-2 rounded-lg bg-surface-container-high text-on-surface font-body-sm text-body-sm font-semibold" type="button">Cancel</button>
-            <button onClick={handleOverride} disabled={!overrideReason.trim()} className="px-space-md py-2 rounded-lg bg-primary-container text-on-primary-container font-body-sm text-body-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed" type="button">Submit Override / جمع کریں</button>
+            <button onClick={handleOverride} disabled={overrideReason.trim().length < 8} className="px-space-md py-2 rounded-lg bg-primary-container text-on-primary-container font-body-sm text-body-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed" type="button">Submit Override / جمع کریں</button>
           </div>
         </Modal>
 

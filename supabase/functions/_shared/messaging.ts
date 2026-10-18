@@ -57,6 +57,67 @@ export async function telegramSend(chatId: number, text: string): Promise<boolea
   } catch { return false }
 }
 
+// ---------------------------------------------------------------- Twilio (optional: real SMS + voice)
+// Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER to send real SMS and voice calls.
+// Without them SMS / voice stay simulated (logged, marked delivered) so the demo still works.
+// TWILIO_WEBHOOK_URL (the public URL of the twilio-webhook function) lets residents reply 1/2/3 by SMS or keypad.
+
+export const twilioConfigured = () =>
+  !!(Deno.env.get('TWILIO_ACCOUNT_SID') && Deno.env.get('TWILIO_AUTH_TOKEN') && Deno.env.get('TWILIO_FROM_NUMBER'))
+
+/** Pakistani numbers: 0300 1234567, 92300..., +92 300 ... all become +92300XXXXXXX. */
+export function toE164(phone: string): string {
+  const d = phone.replace(/\D/g, '')
+  if (d.startsWith('92')) return `+${d}`
+  if (d.startsWith('0')) return `+92${d.slice(1)}`
+  if (d.length === 10) return `+92${d}`
+  return `+${d}`
+}
+
+const xmlEscape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+export async function twilioSend(
+  kind: 'sms' | 'voice',
+  phone: string,
+  text: { en: string; ur: string },
+  lang: 'en' | 'ur',
+): Promise<'sent' | 'failed' | 'unconfigured'> {
+  if (!twilioConfigured()) return 'unconfigured'
+  const sid = Deno.env.get('TWILIO_ACCOUNT_SID')!
+  const auth = 'Basic ' + btoa(`${sid}:${Deno.env.get('TWILIO_AUTH_TOKEN')!}`)
+  const base = `https://api.twilio.com/2010-04-01/Accounts/${sid}`
+  const form = new URLSearchParams({ To: toE164(phone), From: Deno.env.get('TWILIO_FROM_NUMBER')! })
+  let url = `${base}/Messages.json`
+  if (kind === 'sms') {
+    form.set('Body', lang === 'ur' ? text.ur : text.en)
+  } else {
+    url = `${base}/Calls.json`
+    const urduVoice = Deno.env.get('TWILIO_URDU_VOICE') // e.g. a Google TTS voice that supports Urdu
+    const say = lang === 'ur' && urduVoice
+      ? `<Say voice="${xmlEscape(urduVoice)}" language="ur-IN">${xmlEscape(text.ur)}</Say>`
+      : `<Say language="en-IN">${xmlEscape(text.en)}</Say>`
+    const hook = Deno.env.get('TWILIO_WEBHOOK_URL')
+    form.set('Twiml', hook
+      ? `<Response><Gather numDigits="1" timeout="8" action="${xmlEscape(hook)}?kind=voice" method="POST">${say}</Gather>${say}</Response>`
+      : `<Response>${say}</Response>`)
+  }
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+    return r.ok ? 'sent' : 'failed'
+  } catch { return 'failed' }
+}
+
+/** Twilio signs webhooks: HMAC-SHA1 of the full URL + sorted POST params, base64. */
+export async function validTwilioSignature(url: string, params: URLSearchParams, signature: string | null): Promise<boolean> {
+  const token = Deno.env.get('TWILIO_AUTH_TOKEN')
+  if (!token || !signature) return false
+  const data = url + [...params.keys()].sort().map((k) => k + (params.get(k) ?? '')).join('')
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(token), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))
+  const expected = btoa(String.fromCharCode(...new Uint8Array(mac)))
+  return expected === signature
+}
+
 export type DeliverResult = { channel: string; delivered: boolean; simulated: boolean; reason: string }
 
 /**
@@ -84,8 +145,12 @@ export async function deliver(
       type: 'buddy', related_case_id: c.id,
     })
     delivered = true
+  } else if ((route.channel === 'sms' || route.channel === 'voice') && c.phone) {
+    const r = await twilioSend(route.channel, c.phone, msg, lang)
+    if (r === 'unconfigured') { delivered = true; simulated = true } // simulated transcript behind the same call
+    else { delivered = r === 'sent'; simulated = false }
   } else {
-    delivered = true // SMS / voice / others: simulated transcript
+    delivered = true // WhatsApp / mesh / no number on file: simulated transcript
   }
 
   await sb.from('communication_log').insert({

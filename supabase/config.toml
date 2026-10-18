@@ -19,3 +19,14 @@ verify_jwt = true
 
 [functions.seed-reset-demo]
 verify_jwt = true
+
+# Called by Twilio (signature-verified inside the function), optional.
+[functions.twilio-webhook]
+verify_jwt = false
+
+# Coordinator-only; the function checks the caller's role itself.
+[functions.weather-sync]
+verify_jwt = true
+
+[functions.case-action]
+verify_jwt = true

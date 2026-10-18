@@ -115,6 +115,13 @@ function Shell() {
         <div className={`flex-1 min-w-0 flex flex-col min-h-screen ${user && !isMobile ? 'lg:pl-64 lg:rtl:pl-0 lg:rtl:pr-64' : ''}`}>
           {user && <TopBar />}
           <main className={`flex-1 w-full min-w-0 mx-auto ${isMobile ? 'mobile-shell' : ''} ${!user ? 'max-w-none !p-0' : isMobile ? 'pt-32 pb-28 max-w-[560px]' : 'pt-28 pb-16 max-w-[1520px]'} px-margin lg:px-space-lg`}>
+            {user && (
+              <div role="note" className="mb-space-sm flex items-center justify-center gap-2 rounded-lg bg-surface-container-low px-3 py-1.5 font-telemetry-sm text-[11px] text-on-surface-variant">
+                <span className="material-symbols-outlined text-[14px] text-primary">science</span>
+                <span>Synthetic demonstration data. No real people or households.</span>
+                <span className="font-urdu-body" dir="rtl">مصنوعی ڈیمو ڈیٹا، کوئی حقیقی شخص نہیں</span>
+              </div>
+            )}
             <Guard>
               <Routes>
                 <Route path="/" element={<LandingPage />} />

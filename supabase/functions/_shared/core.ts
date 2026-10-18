@@ -2,6 +2,7 @@ import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
 import { DEFAULT_RULES, score, type Rules } from './scoring.ts'
 import { optimise, type OptAsset, type OptCase } from './optimizer.ts'
 import { deliver, TEXT } from './messaging.ts'
+import { syncWeather } from './weather.ts'
 
 const AREA_CENTER: Record<string, [number, number]> = {
   lyari: [24.8615, 66.9905], malir: [24.893, 67.195], korangi: [24.8376, 67.1204],
@@ -57,6 +58,7 @@ export async function runRecompute(sb: SupabaseClient) {
     const s = score({
       flags, age: c.age, phoneType: c.phone_type, exposure: c.exposure_score, unknown: c.unknown_data,
       confidence: c.confidence_score, silentMinutes: silent, countdownMinutes: countdownMin, mode, rules, silenceMin,
+      riskMultiplier: Number(cfg.fairness_boost?.[c.area] ?? 1),
     })
     return { c, flags, s }
   })
@@ -176,6 +178,9 @@ export async function runTick(sb: SupabaseClient) {
   const cfg = await loadConfig(sb)
   const now = demoNowMs(cfg)
   const out: Record<string, unknown> = {}
+
+  // Live forecast (Open-Meteo, no key) sets the hazard clock unless the demo controls have locked it.
+  out.weather = await syncWeather(sb, cfg)
 
   // Hazard clock + staged alerts
   const hz = cfg.hazard_state || {}

@@ -10,12 +10,17 @@
 --   7. database/sql/07_authenticated_reads.sql
 --   8. database/sql/08_pdf_backend.sql   (check-ins, invite codes, anonymised viewer, demo reset)
 --   9. database/sql/09_registration_to_case.sql   (registrations become scored cases)
+--  10. database/sql/10_map_cron.sql   (asset depots for the map, pg_cron schedule for `tick`)
 --
--- Edge Functions (supabase/functions): recompute, tick, send-message, intake-parse,
--- telegram-webhook, seed-reset-demo. Deploy with `supabase functions deploy <name>` and set secrets:
+-- Edge Functions (supabase/functions), 9 in total: recompute, tick, send-message, intake-parse,
+-- telegram-webhook, seed-reset-demo, weather-sync, case-action, twilio-webhook.
+-- Deploy each with `supabase functions deploy <name>` and set secrets:
 --   supabase secrets set CRON_SECRET=... TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=...
--- Run `tick` every minute (Dashboard -> Integrations -> Cron, or pg_cron + pg_net) with header
---   x-cron-secret: <CRON_SECRET>
+--   Optional real SMS/voice: TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER TWILIO_WEBHOOK_URL
+-- Scheduling `tick` every minute: in Dashboard -> Project Settings -> Vault add two secrets,
+--   project_url  (https://YOUR-PROJECT.supabase.co)   and   cron_secret  (same value as CRON_SECRET),
+-- then re-run 10_map_cron.sql. It schedules `nlb-tick` with pg_cron + pg_net (sends header x-cron-secret).
+-- Weather (Open-Meteo, no key) is refreshed by `tick`, and by the coordinator's browser as a fallback.
 --
 -- Enable PostGIS first: Dashboard → Database → Extensions → postgis
 -- (01 also runs CREATE EXTENSION IF NOT EXISTS postgis.)
