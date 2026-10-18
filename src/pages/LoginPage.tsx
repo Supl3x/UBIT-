@@ -144,6 +144,9 @@ export default function LoginPage() {
           showToast(t('accessGranted', 'en'), t('accessGranted', 'ur'), 'success')
           return navigate(ROLE_HOMES[live?.role || role])
         }
+        if (error && !/invalid login credentials/i.test(error.message)) {
+          return err(error.message)
+        }
       }
       const hash = await sha(f.password)
       const acct = loadLocal().find((a) => a.email === email && a.hash === hash)
