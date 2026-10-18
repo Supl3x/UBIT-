@@ -10,6 +10,7 @@
 * **Team Members:**
   * **Muhammad Feras Malik**
   * **Muhammad Ahmed Khan**
+  * **Muhammad Sarim Umer**
   * *(Additional team members can be added here)*
 
 ---
